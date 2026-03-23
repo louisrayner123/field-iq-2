@@ -609,7 +609,9 @@ async function confirmSelection() {
   }, 3500);
 
   try {
-    const res = await fetch('/api/analyse', {
+    let analyseRes, analyseData;
+    try {
+      analyseRes = await fetch('/api/analyse', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -625,7 +627,14 @@ async function confirmSelection() {
       })
     });
 
-    const data = await res.json();
+      });
+      analyseData = await analyseRes.json();
+    } catch(fetchErr) {
+      clearInterval(stepTimer);
+      document.getElementById('step3').innerHTML = `<div class="card" style="max-width:600px;"><div style="color:var(--red);font-weight:700;margin-bottom:.5rem;">⚠️ Connection Error</div><div style="font-size:.85rem;color:var(--text2);">Could not reach the server. Check your Railway deployment is running.<br><br><code>${fetchErr.message}</code></div><button class="btn btn-ghost" style="margin-top:1rem;" onclick="location.reload()">Try Again</button></div>`;
+      return;
+    }
+    const data = analyseData;
     clearInterval(stepTimer);
 
     // Mark all done
@@ -639,14 +648,23 @@ async function confirmSelection() {
     await delay(600);
     document.getElementById('step3').style.display = 'none';
 
-    if (data.error) throw new Error(data.error);
+    if (data.error) {
+      document.getElementById('step3').innerHTML = `
+        <div class="card" style="max-width:600px;">
+          <div style="color:var(--red);font-weight:700;margin-bottom:.75rem;">⚠️ Analysis Error</div>
+          <div style="font-size:.85rem;color:var(--text2);margin-bottom:.5rem;">${data.error}</div>
+          ${data.detail ? `<pre style="font-size:.7rem;background:var(--surface2);padding:.75rem;border-radius:6px;overflow:auto;max-height:200px;color:var(--text3);">${data.detail}</pre>` : ''}
+          <button class="btn btn-ghost" style="margin-top:1rem;" onclick="location.reload()">Try Again</button>
+        </div>`;
+      return;
+    }
     renderResults(data);
 
   } catch(e) {
     clearInterval(stepTimer);
     document.getElementById('step3').innerHTML = `
       <div class="card" style="max-width:500px;">
-        <div style="color:var(--red);font-weight:600;margin-bottom:.5rem;">Analysis failed</div>
+        <div style="color:var(--red);font-weight:600;margin-bottom:.5rem;">Unexpected error</div>
         <div style="font-size:.85rem;color:var(--text2);">${e.message}</div>
         <button class="btn btn-ghost" style="margin-top:1rem;" onclick="location.reload()">Try Again</button>
       </div>`;
