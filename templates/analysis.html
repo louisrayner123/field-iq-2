@@ -537,22 +537,6 @@ function confirmSelection() {
     return '<div class="step-row" id="as'+i+'"><div class="sdot s-p" id="asdot'+i+'">'+(i+1)+'</div><span class="stxt" id="astxt'+i+'">'+s.label+'</span></div>';
   }).join('');
 
-  var stepIdx = 0;
-  var stepTimer = setInterval(function() {
-    if (stepIdx > 0) {
-      var prev = document.getElementById('asdot'+(stepIdx-1));
-      if (prev) { prev.className = 'sdot s-d'; prev.textContent = '✓'; }
-      var prevTxt = document.getElementById('astxt'+(stepIdx-1));
-      if (prevTxt) prevTxt.className = 'stxt done';
-    }
-    if (stepIdx < steps.length) {
-      var dot = document.getElementById('asdot'+stepIdx);
-      if (dot) { dot.className = 'sdot s-a'; dot.textContent = ''; }
-      document.getElementById('analysisBar').style.width = steps[stepIdx].pct + '%';
-      stepIdx++;
-    }
-  }, 3500);
-
   var payload = {
     video_id: videoId,
     bbox: bbox,
@@ -565,43 +549,93 @@ function confirmSelection() {
     prev_goals: document.getElementById('fGoals').value
   };
 
+  // Start the job — returns immediately with a job_id
   fetch('/api/analyse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   })
-  .then(function(res) {
-    return res.json();
-  })
+  .then(function(res) { return res.json(); })
   .then(function(data) {
-    clearInterval(stepTimer);
-    steps.forEach(function(_, i) {
-      var dot = document.getElementById('asdot'+i);
-      var txt = document.getElementById('astxt'+i);
-      if (dot) { dot.className = 'sdot s-d'; dot.textContent = '✓'; }
-      if (txt) txt.className = 'stxt done';
-    });
-    document.getElementById('analysisBar').style.width = '100%';
-
     if (data.error) {
       document.getElementById('step3').style.display = 'none';
-      showErr('Analysis error: ' + data.error + (data.detail ? '\n\n' + data.detail : ''));
       document.getElementById('step1').style.display = 'block';
+      showErr('Failed to start analysis: ' + data.error);
       return;
     }
-
-    setTimeout(function() {
-      document.getElementById('step3').style.display = 'none';
-      renderResults(data);
-    }, 600);
+    // Poll for results every 3 seconds
+    pollJob(data.job_id, steps);
   })
   .catch(function(e) {
-    clearInterval(stepTimer);
     document.getElementById('step3').style.display = 'none';
-    showErr('Connection error: ' + e.message + '. Check Railway logs.');
     document.getElementById('step1').style.display = 'block';
+    showErr('Connection error: ' + e.message);
   });
 }
+
+function pollJob(jobId, steps) {
+  var stepIdx = 0;
+
+  var interval = setInterval(function() {
+    fetch('/api/job/' + jobId)
+    .then(function(res) { return res.json(); })
+    .then(function(job) {
+
+      // Update progress bar
+      document.getElementById('analysisBar').style.width = (job.progress || 0) + '%';
+
+      // Advance step indicators based on progress
+      var targetStep = Math.floor((job.progress || 0) / (100 / steps.length));
+      while (stepIdx < targetStep && stepIdx < steps.length) {
+        var dot = document.getElementById('asdot' + stepIdx);
+        var txt = document.getElementById('astxt' + stepIdx);
+        if (dot) { dot.className = 'sdot s-d'; dot.textContent = '\u2713'; }
+        if (txt) txt.className = 'stxt done';
+        stepIdx++;
+        if (stepIdx < steps.length) {
+          var ndot = document.getElementById('asdot' + stepIdx);
+          if (ndot) { ndot.className = 'sdot s-a'; ndot.textContent = ''; }
+        }
+      }
+
+      // Update step label with live server message
+      if (job.step && stepIdx < steps.length) {
+        var cur = document.getElementById('astxt' + stepIdx);
+        if (cur) cur.textContent = job.step;
+      }
+
+      if (job.status === 'done') {
+        clearInterval(interval);
+
+        // Mark all done
+        steps.forEach(function(_, i) {
+          var d = document.getElementById('asdot'+i);
+          var t = document.getElementById('astxt'+i);
+          if (d) { d.className = 'sdot s-d'; d.textContent = '\u2713'; }
+          if (t) t.className = 'stxt done';
+        });
+        document.getElementById('analysisBar').style.width = '100%';
+
+        setTimeout(function() {
+          document.getElementById('step3').style.display = 'none';
+          renderResults({ stats: job.stats, feedback: job.feedback });
+        }, 600);
+      }
+
+      if (job.status === 'error') {
+        clearInterval(interval);
+        document.getElementById('step3').style.display = 'none';
+        document.getElementById('step1').style.display = 'block';
+        showErr('Analysis failed: ' + job.error + (job.detail ? '\n\n' + job.detail : ''));
+      }
+    })
+    .catch(function(e) {
+      // Network blip — keep polling, don't stop
+      console.log('Poll error (will retry):', e.message);
+    });
+  }, 3000); // Poll every 3 seconds
+}
+
 
 // ── RENDER RESULTS ──
 function renderResults(data) {
@@ -710,3 +744,4 @@ function clearErr() {
 </script>
 </body>
 </html>
+
